@@ -1,8 +1,8 @@
-# Thara Energy — AI Agentic Recruiting Workbench (V3.2)
+# AI Agentic Recruiting Workbench
 
-A Streamlit prototype for the IRIS P&O Digital, Data & AI Option B case: dynamic JD criteria, AI candidate screening, deterministic weighted scoring, human-in-the-loop review, interview-question generation, and outreach drafting.
+A Streamlit prototype web application for AI-assisted recruitment, featuring dynamic job criteria generation, evidence-based candidate screening, weighted scoring, human review and approval, interview-question generation, and outreach email drafting.
 
-## Main V3.2 features
+## Main features
 
 1. **Job Input** now contains only JD input + the **AI-Generated Assessment Framework**, shown after Agent 1 runs.
 2. **Candidate Database** previews the first five rows and asks for Yes/No confirmation before replacing an existing database.
@@ -62,7 +62,7 @@ The prototype stores workflow state in SQLite so recruiter actions survive norma
 Streamlit reruns and page interactions. The database location can be overridden with
 `DATABASE_PATH` (or `DATA_DIR`). SQLite is appropriate for this prototype and local
 testing, but it is **not a production persistence layer on Streamlit Community Cloud**:
-its local filesystem can be recreated when the app is restarted/rebuilt. For the IRIS
+its local filesystem can be recreated when the app is restarted/rebuilt. For the this
 prototype, this is acceptable; a production version should move candidate/workflow
 state to a managed database such as PostgreSQL or another persistent datastore.
 
