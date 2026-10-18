@@ -82,6 +82,15 @@ class CriteriaWeightExplanations(BaseModel):
     explanations: List[CriterionWeightExplanation] = Field(min_length=3, max_length=8)
 
 
+class CriterionEvidenceSource(BaseModel):
+    criterion_id: str
+    source_segment_id: str
+
+
+class CriteriaEvidenceSources(BaseModel):
+    sources: List[CriterionEvidenceSource] = Field(min_length=3, max_length=8)
+
+
 class CriterionWeight(BaseModel):
     criterion_id: str
     weight: float = Field(gt=0, le=100)

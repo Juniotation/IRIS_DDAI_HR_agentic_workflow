@@ -18,6 +18,7 @@ from .config import (
 )
 from .models import (
     CandidateEvaluation,
+    CriteriaEvidenceSources,
     CriteriaWeightAllocation,
     CriteriaWeightExplanations,
     InterviewQuestions,
@@ -206,7 +207,8 @@ Rules:
 - Mark must-have only when the JD clearly indicates the requirement is required.
 - Give concise evidence signals a recruiter can verify in a CV.
 - For each criterion, explain why its weight reflects its relative importance in this JD.
-- For each criterion, provide one exact, verbatim excerpt from the JD that supports its weight.
+- Criteria names and definitions may summarize the JD in new wording, as long as their meaning is supported by it.
+- For each criterion, provide one source_evidence excerpt from the JD that supports it. This field must be copied verbatim.
 - Include scoring exclusions. Name, email, university, age, gender, nationality and other protected/irrelevant attributes must not drive mathematical scoring.
 - Do not invent requirements that are not supported by the JD.
 - Keep the response concise; this is a screening rubric, not a full essay.
@@ -223,7 +225,7 @@ IMPORTANT FORMAT CONTRACT:
 - Every criterion MUST include all eight fields listed above; no field is optional.
 - evidence_to_look_for MUST be a JSON array of short strings (never a single string).
 - weight_reason MUST briefly explain why the criterion deserves its assigned percentage relative to the other criteria, using the JD.
-- source_evidence MUST be copied verbatim from the JOB DESCRIPTION below, not paraphrased. It is the source data supporting the weight.
+- source_evidence MUST identify the original JD wording supporting the criterion. Do not force the criterion name or definition to repeat the JD wording.
 - must_have_requirements, nice_to_have_requirements, scoring_exclusions MUST be JSON arrays of strings.
 - weight MUST be a number, and all criterion weights must sum to exactly 100.
 - recommendation_rules MUST be a JSON object with numeric strong_fit_min, potential_fit_min, not_recommended_below.
@@ -287,19 +289,94 @@ EXISTING CRITERIA (weights are fixed and must not be changed):
 
     normalized_jd = re.sub(r"\s+", " ", jd_text).casefold()
     updated_criteria = []
+    needs_source_selection = False
     for criterion in criteria.criteria:
         explanation = by_id[criterion.criterion_id]
         normalized_source = re.sub(r"\s+", " ", explanation.source_evidence).strip().casefold()
-        if normalized_source not in normalized_jd:
-            raise ValueError(
-                f"Agent did not provide a verbatim job-description excerpt for '{criterion.name}'."
-            )
+        source_evidence = explanation.source_evidence
+        if not normalized_source or normalized_source not in normalized_jd:
+            needs_source_selection = True
+            source_evidence = ""
         updated_criteria.append(
             criterion.model_copy(
                 update={
                     "weight_reason": explanation.weight_reason,
-                    "source_evidence": explanation.source_evidence,
+                    "source_evidence": source_evidence,
                 }
+            )
+        )
+    enriched = criteria.model_copy(update={"criteria": updated_criteria})
+    if needs_source_selection:
+        enriched = _select_verbatim_criteria_sources(jd_text, enriched)
+    return enriched
+
+
+def _job_description_segments(jd_text: str) -> list[tuple[str, str]]:
+    segments = []
+    for line in jd_text.splitlines():
+        for sentence in re.split(r"(?<=[.!?])\s+", line.strip()):
+            remaining = sentence.strip()
+            while remaining:
+                if len(remaining) <= 700:
+                    segments.append(remaining)
+                    break
+                split_at = remaining.rfind(" ", 0, 700)
+                if split_at <= 0:
+                    split_at = 700
+                segments.append(remaining[:split_at].strip())
+                remaining = remaining[split_at:].strip()
+    if not segments and jd_text.strip():
+        segments.append(jd_text.strip()[:700])
+    return [(f"S{index:03}", text) for index, text in enumerate(segments, start=1)]
+
+
+def _select_verbatim_criteria_sources(jd_text: str, criteria: JobCriteria) -> JobCriteria:
+    segments = _job_description_segments(jd_text)
+    if not segments:
+        raise ValueError("The job description does not contain text to use as criterion evidence.")
+
+    segment_text = "\n".join(f"{segment_id}: {text}" for segment_id, text in segments)
+    criteria_text = criteria.model_dump_json(indent=2)
+    prompt = f"""
+You are grounding an existing assessment framework in its original job description.
+Criteria names and definitions may summarize the JD in different wording. For each criterion,
+select the single JD segment that best supports its meaning. Do not rewrite or invent JD text.
+Choose a segment by its ID; the application will display the original segment verbatim.
+Do not change any criterion, weight, or explanation.
+
+Return one JSON object with key "sources", containing exactly one object per criterion.
+Each object must have exactly: criterion_id, source_segment_id.
+Use every criterion_id exactly once and only segment IDs included below.
+
+CRITERIA:
+{criteria_text}
+
+JOB DESCRIPTION SEGMENTS:
+{segment_text}
+"""
+    result = _json_call(
+        GEMINI_MODEL,
+        prompt,
+        CriteriaEvidenceSources,
+        max_output_tokens=800,
+    )
+    by_id = {item.criterion_id: item.source_segment_id for item in result.sources}
+    expected_ids = {item.criterion_id for item in criteria.criteria}
+    if len(by_id) != len(result.sources) or set(by_id) != expected_ids:
+        raise ValueError("Agent did not select exactly one job-description source for each criterion.")
+
+    source_by_segment_id = dict(segments)
+    updated_criteria = []
+    for criterion in criteria.criteria:
+        segment_id = by_id[criterion.criterion_id]
+        if segment_id not in source_by_segment_id:
+            raise ValueError(
+                f"Agent selected an unknown job-description segment '{segment_id}' "
+                f"for criterion '{criterion.name}'."
+            )
+        updated_criteria.append(
+            criterion.model_copy(
+                update={"source_evidence": source_by_segment_id[segment_id]}
             )
         )
     return criteria.model_copy(update={"criteria": updated_criteria})
@@ -410,10 +487,11 @@ Fairness rules:
 - Do not use full_name, email, university, age, gender, nationality, or other non-job-relevant personal attributes.
 - GPA may be used only when the generated criteria make academic performance relevant.
 - Do not invent skills, projects, experience, certifications, or achievements.
+- Match evidence by meaning, not by identical wording. A candidate's "great in Excel" can support a requirement for strong spreadsheet skills; equivalent terminology is valid when the raw evidence supports the criterion.
 - If no direct, criterion-relevant evidence appears in the candidate's raw data, score that criterion 0.
 - Return exactly one criterion assessment for every criterion ID below.
 - Score each criterion 0-100 and provide a concise evidence-based reason plus the raw candidate evidence supporting that score.
-- A score above 0 requires direct, criterion-relevant evidence. For evidence, copy one contiguous, verbatim excerpt from a single CANDIDATE EVIDENCE field. Do not rewrite, infer, or fabricate evidence. If no direct evidence supports the criterion, return score 0 and an empty evidence string.
+- A score above 0 requires direct, criterion-relevant evidence. Judge whether the candidate evidence is relevant semantically; it does not need to repeat the criterion's exact words. For evidence, copy one contiguous, verbatim excerpt from a single CANDIDATE EVIDENCE field so the recruiter can verify the raw wording. Do not rewrite, infer unsupported qualifications, or fabricate evidence. If no direct evidence supports the criterion, return score 0 and an empty evidence string.
 - Do not calculate the overall weighted score.
 
 Return ONE JSON object with exactly these top-level keys:
@@ -426,7 +504,7 @@ IMPORTANT FORMAT CONTRACT:
 - score MUST be an integer from 0 to 100.
 - score MUST be 0 whenever no direct, criterion-relevant raw-data evidence is available.
 - reason MUST be a single string, 1-3 sentences.
-- Any score above 0 MUST have a verifiable verbatim excerpt in evidence. evidence MUST be one contiguous excerpt from a single raw candidate field, or an empty string when none is available.
+- A semantic match may use different wording from the criterion, but any score above 0 MUST have a verifiable verbatim excerpt from the raw candidate data in evidence. evidence MUST be one contiguous excerpt from a single raw candidate field, or an empty string when none is available.
 - Do not wrap the JSON in markdown fences.
 
 CRITERIA:

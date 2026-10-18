@@ -1,8 +1,8 @@
-# Thara Energy — AI Agentic Recruiting Workbench (V3.2)
+# Thara Energy — AI Agentic Recruiting Workbench
 
 A Streamlit prototype for the IRIS P&O Digital, Data & AI Option B case: dynamic JD criteria, AI candidate screening, deterministic weighted scoring, human-in-the-loop review, interview-question generation, and outreach drafting.
 
-## Main V3.2 features
+## Main features
 
 1. **Job Input** now contains only JD input + the **AI-Generated Assessment Framework**, shown after Agent 1 runs.
 2. **Candidate Database** previews the first five rows and asks for Yes/No confirmation before replacing an existing database.
@@ -19,7 +19,7 @@ A Streamlit prototype for the IRIS P&O Digital, Data & AI Option B case: dynamic
 8. Recruiter notes and all actions persist to SQLite, and `st.rerun()` refreshes the dashboard immediately after changes.
 9. Email is explicit: generated content is not sent automatically. In default `mock` mode, clicking Send Email marks it sent without sending a real external email.
 10. Existing V2.x SQLite databases are migrated/normalized when the app starts.
-11. Assessment criterion details explain each assigned weight and show the verbatim job-description excerpt used as its source; weights are based on the role, not candidate profiles. Older saved frameworks are enriched from their original job description without changing their weights.
+11. Assessment criterion names and definitions may summarize the job description in new wording. Criterion details explain each assigned weight and show the original job-description excerpt selected as supporting raw data; weights are based on the role, not candidate profiles. Older saved frameworks are enriched from their original job description without changing their weights.
 12. Recruiters can change criterion percentages using the controls at the bottom-right of the framework panel. A reason is required. If the total is not 100%, Agent 1 redistributes only criteria whose percentages the recruiter did not edit, preserving every manually edited percentage; the recruiter can also return and edit ratios. Ratio and history dialogs stay open when clicking outside and close only through their in-dialog controls. Closing an unsubmitted ratio edit discards it without changing saved ratios. Each criterion retains its AI-generated starting ratio and a persistent change history, and existing candidate scores are recalculated from saved criterion scores.
 
 ## Run locally
@@ -48,7 +48,7 @@ The default candidate database is `data/thara_energy_candidates_db.csv`. The SQL
 
 **Agent 1:** JD → dynamic assessment framework
 
-**Agent 2:** candidate evidence → criterion scores/reasons with verbatim raw-data evidence (criteria without a verifiable evidence excerpt score 0) → deterministic weighted score including all criteria → AI recommendation
+**Agent 2:** candidate evidence → criterion scores/reasons based on semantic relevance (equivalent wording is allowed), with a verbatim raw-data excerpt for recruiter verification (criteria without a verifiable evidence excerpt score 0) → deterministic weighted score including all criteria → AI recommendation
 
 **Human:** candidate popup → approve/reject/review + recruiter note
 

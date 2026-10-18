@@ -961,6 +961,10 @@ def open_candidate_dialog(candidate_id: str):
         if assessment.empty:
             st.warning("No criterion assessment is available for this candidate.")
         else:
+            st.caption(
+                "Scores may reflect evidence with equivalent meaning even when the wording differs. "
+                "Compare each raw-data excerpt below with the criterion before making a decision."
+            )
             for _, a in assessment.iterrows():
                 with st.expander(f"{a['criterion_name']} — {int(a['score'])}/100 | Weight {a['weight']:g}%"):
                     st.write(f"**Reason:** {a['score_reason']}")
@@ -970,7 +974,7 @@ def open_candidate_dialog(candidate_id: str):
                     elif not evidence:
                         evidence = "Raw data was not captured for this screening."
                     st.write(
-                        "**Evidence:** "
+                        "**Candidate raw evidence (verbatim excerpt):** "
                         + evidence
                     )
 

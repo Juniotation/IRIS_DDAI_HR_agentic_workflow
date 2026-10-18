@@ -2,6 +2,7 @@ import pytest
 
 from backend import gemini_agents
 from backend.models import (
+    CriteriaEvidenceSources,
     CriteriaWeightAllocation,
     CriteriaWeightExplanations,
     CriterionWeight,
@@ -59,8 +60,12 @@ def test_legacy_criteria_without_weight_explanation_remain_loadable():
     assert criterion.source_evidence == ""
 
 
-def test_agent_one_requires_verbatim_job_description_evidence(monkeypatch):
+def test_agent_one_accepts_paraphrased_criteria_and_shows_verbatim_source(monkeypatch):
     source = "Strong SQL and Excel capability is required."
+    jd_text = (
+        "Strong SQL and Excel capability is required. "
+        "Please communicate findings clearly to business stakeholders."
+    )
     criteria = JobCriteria(
         job_title="Data Analyst",
         role_summary="Analyze supply chain data and communicate findings to business teams.",
@@ -90,33 +95,54 @@ def test_agent_one_requires_verbatim_job_description_evidence(monkeypatch):
                 evidence_to_look_for=["Presentations"],
                 weight=20,
                 weight_reason="Communication supports adoption of analytical findings.",
-                source_evidence="communicate findings",
+                source_evidence="Explain results to company leaders.",
             ),
         ],
         must_have_requirements=["Strong SQL and Excel capability"],
         scoring_exclusions=["name", "email", "age"],
         recommendation_rules={"strong_fit_min": 80, "potential_fit_min": 65},
     )
-    monkeypatch.setattr(gemini_agents, "_json_call", lambda *args, **kwargs: criteria)
-
-    result = gemini_agents.agent_1_build_criteria(
-        "Strong SQL and Excel capability is required. Please communicate findings."
+    explanations = CriteriaWeightExplanations(
+        explanations=[
+            CriterionWeightExplanation(
+                criterion_id="C01",
+                weight_reason="SQL is explicitly required and central to the analysis work.",
+                source_evidence=source,
+            ),
+            CriterionWeightExplanation(
+                criterion_id="C02",
+                weight_reason="Excel is explicitly required as a core working tool.",
+                source_evidence=source,
+            ),
+            CriterionWeightExplanation(
+                criterion_id="C03",
+                weight_reason="Communication supports adoption of analytical findings.",
+                source_evidence="Explain results to company leaders.",
+            ),
+        ]
     )
-
-    assert result.criteria[0].source_evidence == source
-
-    def reject_invalid_source(*_args):
-        raise ValueError(
-            "Agent did not provide a verbatim job-description excerpt for 'Communication'."
-        )
-
+    evidence_sources = CriteriaEvidenceSources(
+        sources=[
+            {"criterion_id": "C01", "source_segment_id": "S001"},
+            {"criterion_id": "C02", "source_segment_id": "S001"},
+            {"criterion_id": "C03", "source_segment_id": "S002"},
+        ]
+    )
+    responses = iter([criteria, explanations, evidence_sources])
     monkeypatch.setattr(
         gemini_agents,
-        "enrich_criteria_weight_explanations",
-        reject_invalid_source,
+        "_json_call",
+        lambda *_args, **_kwargs: next(responses),
     )
-    with pytest.raises(ValueError, match="verbatim job-description excerpt"):
-        gemini_agents.agent_1_build_criteria("SQL and Excel are useful.")
+
+    result = gemini_agents.agent_1_build_criteria(jd_text)
+
+    assert result.criteria[2].name == "Communication"
+    assert result.criteria[2].definition == "Ability to communicate analytical findings clearly."
+    assert result.criteria[2].source_evidence == (
+        "Please communicate findings clearly to business stakeholders."
+    )
+    assert result.criteria[2].source_evidence in jd_text
 
 
 def test_agent_one_enriches_missing_weight_explanations(monkeypatch):
@@ -212,24 +238,37 @@ def test_legacy_criteria_can_be_enriched_without_changing_weights(monkeypatch):
             CriterionWeightExplanation(
                 criterion_id="C01",
                 weight_reason="SQL is central to the role's data analysis responsibilities.",
-                source_evidence="Strong SQL skills are required.",
+                source_evidence="SQL ability is a key responsibility.",
             ),
             CriterionWeightExplanation(
                 criterion_id="C02",
                 weight_reason="Excel supports the required preparation and reporting work.",
-                source_evidence="Advanced Excel is needed for reporting.",
+                source_evidence="Spreadsheet reporting is important.",
             ),
             CriterionWeightExplanation(
                 criterion_id="C03",
                 weight_reason="Communication ensures findings reach relevant stakeholders.",
-                source_evidence="Communicate findings to stakeholders.",
+                source_evidence="Share insights clearly.",
             ),
         ]
     )
-    monkeypatch.setattr(gemini_agents, "_json_call", lambda *args, **kwargs: explanations)
+    evidence_sources = CriteriaEvidenceSources(
+        sources=[
+            {"criterion_id": "C01", "source_segment_id": "S001"},
+            {"criterion_id": "C02", "source_segment_id": "S002"},
+            {"criterion_id": "C03", "source_segment_id": "S003"},
+        ]
+    )
+    responses = iter([explanations, evidence_sources])
+    monkeypatch.setattr(
+        gemini_agents,
+        "_json_call",
+        lambda *_args, **_kwargs: next(responses),
+    )
 
     enriched = gemini_agents.enrich_criteria_weight_explanations(
-        "Strong SQL skills are required. Advanced Excel is needed for reporting. "
+        "Strong SQL skills are required.\n"
+        "Advanced Excel is needed for reporting.\n"
         "Communicate findings to stakeholders.",
         criteria,
     )
@@ -237,6 +276,11 @@ def test_legacy_criteria_can_be_enriched_without_changing_weights(monkeypatch):
     assert [item.weight for item in enriched.criteria] == [50, 30, 20]
     assert all(item.weight_reason for item in enriched.criteria)
     assert all(item.source_evidence for item in enriched.criteria)
+    assert [item.source_evidence for item in enriched.criteria] == [
+        "Strong SQL skills are required.",
+        "Advanced Excel is needed for reporting.",
+        "Communicate findings to stakeholders.",
+    ]
     assert all(not item.weight_reason for item in criteria.criteria)
 
 

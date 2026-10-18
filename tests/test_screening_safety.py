@@ -42,6 +42,120 @@ def test_recommendation_accepts_reloaded_rules_model():
     assert recommendation(70.0, rules) == "Potential Fit"
 
 
+def test_agent_two_allows_semantic_matches_but_requires_raw_evidence(monkeypatch):
+    captured = {}
+    expected = CandidateEvaluation(
+        criterion_assessments=[
+            CriterionAssessment(
+                criterion_id="C01",
+                score=80,
+                reason="Excel proficiency supports the spreadsheet requirement.",
+                evidence="Great in Excel",
+            ),
+            CriterionAssessment(
+                criterion_id="C02",
+                score=0,
+                reason="No direct communication evidence was provided.",
+                evidence="",
+            ),
+            CriterionAssessment(
+                criterion_id="C03",
+                score=0,
+                reason="No direct problem-solving evidence was provided.",
+                evidence="",
+            ),
+        ],
+        strengths="The candidate reports strong Excel ability.",
+        gaps="Communication and problem-solving evidence is not available.",
+    )
+
+    def fake_json_call(_model, prompt, _schema, max_output_tokens=None):
+        captured["prompt"] = prompt
+        return expected
+
+    monkeypatch.setattr(gemini_agents, "_json_call", fake_json_call)
+    criteria = make_criteria()
+    criteria.criteria[0].name = "Spreadsheet Skills"
+    criteria.criteria[0].definition = "Ability to use spreadsheet software effectively for relevant analysis."
+    candidate = {
+        "degree": "B.Eng.",
+        "gpa": 3.5,
+        "skills_summary": "Great in Excel",
+        "experience_summary": "Relevant internship experience",
+    }
+
+    result = gemini_agents.agent_2_score_candidate(criteria, candidate)
+
+    assert result.criterion_assessments[0].score == 80
+    assert result.criterion_assessments[0].evidence == "Great in Excel"
+    assert "Match evidence by meaning, not by identical wording." in captured["prompt"]
+    assert "does not need to repeat the criterion's exact words" in captured["prompt"]
+    assert "verbatim excerpt from a single CANDIDATE EVIDENCE field" in captured["prompt"]
+
+
+def test_screening_keeps_score_for_semantic_match_with_verifiable_raw_excerpt(monkeypatch):
+    criteria = make_criteria()
+    criteria.criteria[0].name = "Spreadsheet Skills"
+    criteria.criteria[0].definition = "Ability to use spreadsheet software effectively for relevant analysis."
+    candidate = {
+        "candidate_id": "C01",
+        "degree": "B.Eng.",
+        "gpa": 3.5,
+        "skills_summary": "Great in Excel",
+        "experience_summary": "Relevant internship experience",
+    }
+    candidates = pd.DataFrame([candidate])
+    expected = CandidateEvaluation(
+        criterion_assessments=[
+            CriterionAssessment(
+                criterion_id="C01",
+                score=80,
+                reason="Excel proficiency supports the spreadsheet requirement.",
+                evidence="Great in Excel",
+            ),
+            CriterionAssessment(
+                criterion_id="C02",
+                score=0,
+                reason="No direct communication evidence was provided.",
+                evidence="",
+            ),
+            CriterionAssessment(
+                criterion_id="C03",
+                score=0,
+                reason="No direct problem-solving evidence was provided.",
+                evidence="",
+            ),
+        ],
+        strengths="The candidate reports strong Excel ability.",
+        gaps="Communication and problem-solving evidence is not available.",
+    )
+    saved_assessments = []
+    saved_results = []
+    monkeypatch.setattr(workflow, "candidate_df", lambda: candidates)
+    monkeypatch.setattr(workflow, "clear_job_outputs", lambda _job_id: None)
+    monkeypatch.setattr(
+        workflow,
+        "write_assessment",
+        lambda _job_id, _candidate_id, criterion_id, _name, _weight, score, reason, evidence:
+            saved_assessments.append((criterion_id, score, reason, evidence)),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "write_result",
+        lambda _job_id, _candidate_id, score, rec, *_args: saved_results.append((score, rec)),
+    )
+    monkeypatch.setattr(workflow, "write_screening_error", lambda *_args: None)
+    monkeypatch.setattr(workflow, "SCREENING_DELAY_SECONDS", 0)
+    monkeypatch.setattr(gemini_agents, "agent_2_score_candidate", lambda *_args: expected)
+
+    result = workflow.run_job_screening("JOB", criteria)
+
+    assert result == {"total": 1, "completed": 1, "errors": 0}
+    assert saved_assessments[0][1] == 80
+    assert saved_assessments[0][3] == "Great in Excel"
+    assert saved_results == [(48.0, "Not Recommended")]
+
+
 def test_screening_retry_only_evaluates_requested_candidates(monkeypatch):
     candidates = pd.DataFrame(
         [
